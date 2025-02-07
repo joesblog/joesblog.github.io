@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Image Outpainting: Drag with jQuery UI Draggable</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+    }
+    /* Container for the image */
+    #container {
+      position: relative;
+      width: 100%;
+      height: 80vh;
+      border: 1px solid #ccc;
+      background: #eee;
+      overflow: hidden;
+    }
+    /* The image will be positioned absolutely (without CSS transforms) so that jQuery UI can manage its top/left */
+    #imageDisplay {
+      position: absolute;
+      cursor: move;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    /* Red guide lines for the center */
+    .center-line {
+      position: absolute;
+      background: red;
+      pointer-events: none;
+    }
+    #verticalLine {
+      width: 1px;
+      height: 100%;
+      left: 50%;
+      top: 0;
+    }
+    #horizontalLine {
+      height: 1px;
+      width: 100%;
+      top: 50%;
+      left: 0;
+    }
+    /* Labels on the red lines */
+    .line-label {
+      position: absolute;
+      background: rgba(255,255,255,0.7);
+      padding: 2px 4px;
+      font-size: 12px;
+      pointer-events: none;
+      border: 1px solid #ccc;
+    }
+    #verticalLabel {
+      top: 50%;
+      left: 52%;
+      transform: translate(-50%, -50%);
+    }
+    #horizontalLabel {
+      top: 48%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+    /* Controls styling */
+    #controls {
+      margin: 10px;
+    }
+    label, button {
+      margin-right: 10px;
+    }
+    input[type="number"] {
+      width: 80px;
+    }
+    pre {
+      background: #f8f8f8;
+      padding: 5px;
+      border: 1px solid #ccc;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <!-- Image file input -->
+    <input type="file" id="fileInput" accept="image/*">
+    <br><br>
+    <!-- Manual padding inputs -->
+    <label>
+      Top Padding:
+      <input type="number" id="topPadding" placeholder="Optional">
+    </label>
+    <label>
+      Bottom Padding:
+      <input type="number" id="bottomPadding" placeholder="Optional">
+    </label>
+    <label>
+      Left Padding:
+      <input type="number" id="leftPadding" placeholder="Optional">
+    </label>
+    <label>
+      Right Padding:
+      <input type="number" id="rightPadding" placeholder="Optional">
+    </label>
+    <br><br>
+    <!-- Target dimensions inputs -->
+    <label>
+      Target Width:
+      <input type="number" id="targetWidth" placeholder="Optional">
+    </label>
+    <label>
+      Target Height:
+      <input type="number" id="targetHeight" placeholder="Optional">
+    </label>
+    <br><br>
+    <!-- Scaling ratio -->
+    <label>
+      Scaling Ratio:
+      <input type="number" id="scalingRatio" value="1" step="0.1">
+    </label>
+    <br><br>
+    <!-- Buttons -->
+    <button id="calcBtn">Calculate Padding &amp; Dimensions</button>
+    <button id="centerHorizontalBtn">Center Horizontal</button>
+    <button id="centerVerticalBtn">Center Vertical</button>
+    <br><br>
+    <!-- Output display area -->
+    <pre id="output"></pre>
+  </div>
+
+  <!-- Container for the image and guide lines -->
+  <div id="container">
+    <img id="imageDisplay" src="" alt="Upload an image">
+    <div id="verticalLine" class="center-line"></div>
+    <div id="horizontalLine" class="center-line"></div>
+    <div id="verticalLabel" class="line-label"></div>
+    <div id="horizontalLabel" class="line-label"></div>
+  </div>
+
+  <!-- Include jQuery and jQuery UI from CDNs -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/smoothness/jquery-ui.css">
+
+  <script>
+    // Global variables
+    let imageLoaded = false;
+    let totalVertPadding = 0, totalHorizPadding = 0;
+    let initialLeft = 0, initialTop = 0; // store the centered position of the image
+    let offsetX = 0, offsetY = 0; // current drag offset from the center
+    let scaling = 1;
+    
+    $(function() {
+      // Helper: sync opposite padding fields.
+      function syncPadding(primaryId, secondaryId) {
+        $('#' + primaryId).on('input', function() {
+          if ($('#' + secondaryId).val() === '') {
+            $('#' + secondaryId).val($(this).val());
+          }
+        });
+      }
+      syncPadding('topPadding', 'bottomPadding');
+      syncPadding('bottomPadding', 'topPadding');
+      syncPadding('leftPadding', 'rightPadding');
+      syncPadding('rightPadding', 'leftPadding');
+
+      // Load image from file input.
+      $('#fileInput').on('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          $('#imageDisplay').attr('src', event.target.result).off('load').on('load', function() {
+            imageLoaded = true;
+            centerImage();
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+
+      // Center the image in the container.
+      function centerImage() {
+        const $img = $('#imageDisplay');
+        const $container = $('#container');
+        // Remove any previous positioning transforms.
+        $img.css({transform: 'none'});
+        // Compute container and image dimensions.
+        const containerWidth = $container.width();
+        const containerHeight = $container.height();
+        const imgWidth = $img.width();
+        const imgHeight = $img.height();
+        // Compute centered left/top values.
+        initialLeft = (containerWidth - imgWidth) / 2;
+        initialTop = (containerHeight - imgHeight) / 2;
+        // Set the image position.
+        $img.css({left: initialLeft, top: initialTop});
+        offsetX = 0;
+        offsetY = 0;
+        updateOutput();
+        // Enable draggable functionality (if not already enabled).
+        if (!$img.data('ui-draggable')) {
+          $img.draggable({
+            containment: "#container",
+            drag: function(event, ui) {
+              // Calculate offset from initial center.
+              offsetX = ui.position.left - initialLeft;
+              offsetY = ui.position.top - initialTop;
+              // Optionally, clamp the offsets so that padding doesn’t go negative.
+              offsetX = Math.max(-totalHorizPadding/2, Math.min(totalHorizPadding/2, offsetX));
+              offsetY = Math.max(-totalVertPadding/2, Math.min(totalVertPadding/2, offsetY));
+              updateOutput();
+            }
+          });
+        }
+      }
+
+      // Calculate the padding and dimensions based on manual inputs and (optionally) target dimensions.
+      $('#calcBtn').on('click', function() {
+        if (!imageLoaded) {
+          $('#output').text("Please upload an image first.");
+          return;
+        }
+        scaling = parseFloat($('#scalingRatio').val()) || 1;
+        const topManual = $('#topPadding').val() !== "" ? parseFloat($('#topPadding').val()) : null;
+        const bottomManual = $('#bottomPadding').val() !== "" ? parseFloat($('#bottomPadding').val()) : null;
+        const leftManual = $('#leftPadding').val() !== "" ? parseFloat($('#leftPadding').val()) : null;
+        const rightManual = $('#rightPadding').val() !== "" ? parseFloat($('#rightPadding').val()) : null;
+        const targetWidth = $('#targetWidth').val() !== "" ? parseFloat($('#targetWidth').val()) : null;
+        const targetHeight = $('#targetHeight').val() !== "" ? parseFloat($('#targetHeight').val()) : null;
+        const $img = $('#imageDisplay');
+        const imageWidth = $img[0].naturalWidth;
+        const imageHeight = $img[0].naturalHeight;
+        let totalHoriz = targetWidth !== null ? targetWidth - imageWidth : null;
+        let totalVert = targetHeight !== null ? targetHeight - imageHeight : null;
+        let topPadding, bottomPadding, leftPadding, rightPadding;
+        // Vertical padding calculation.
+        if (totalVert !== null) {
+          if (totalVert < 0) {
+            $('#output').text("Target height is less than the image height.");
+            return;
+          }
+          if (topManual !== null && bottomManual === null) {
+            topPadding = topManual;
+            bottomPadding = totalVert - topManual;
+          } else if (bottomManual !== null && topManual === null) {
+            bottomPadding = bottomManual;
+            topPadding = totalVert - bottomManual;
+          } else if (topManual === null && bottomManual === null) {
+            topPadding = bottomPadding = totalVert / 2;
+          } else {
+            if (Math.abs(topManual + bottomManual - totalVert) > 0.001) {
+              $('#output').text("The sum of top and bottom padding (" + (topManual + bottomManual) +
+                ") does not match the total required (" + totalVert + ").");
+              return;
+            }
+            topPadding = topManual;
+            bottomPadding = bottomManual;
+          }
+        } else {
+          topPadding = topManual !== null ? topManual : 0;
+          bottomPadding = bottomManual !== null ? bottomManual : 0;
+          totalVert = topPadding + bottomPadding;
+        }
+        // Horizontal padding calculation.
+        if (totalHoriz !== null) {
+          if (totalHoriz < 0) {
+            $('#output').text("Target width is less than the image width.");
+            return;
+          }
+          if (leftManual !== null && rightManual === null) {
+            leftPadding = leftManual;
+            rightPadding = totalHoriz - leftManual;
+          } else if (rightManual !== null && leftManual === null) {
+            rightPadding = rightManual;
+            leftPadding = totalHoriz - rightManual;
+          } else if (leftManual === null && rightManual === null) {
+            leftPadding = rightPadding = totalHoriz / 2;
+          } else {
+            if (Math.abs(leftManual + rightManual - totalHoriz) > 0.001) {
+              $('#output').text("The sum of left and right padding (" + (leftManual + rightManual) +
+                ") does not match the total required (" + totalHoriz + ").");
+              return;
+            }
+            leftPadding = leftManual;
+            rightPadding = rightManual;
+          }
+        } else {
+          leftPadding = leftManual !== null ? leftManual : 0;
+          rightPadding = rightManual !== null ? rightManual : 0;
+          totalHoriz = leftPadding + rightPadding;
+        }
+        // Save computed totals (these represent the extra space to be distributed).
+        totalVertPadding = topPadding + bottomPadding;
+        totalHorizPadding = leftPadding + rightPadding;
+        // Re-center the image.
+        centerImage();
+        updateOutput();
+      });
+
+      // Centering buttons.
+      $('#centerHorizontalBtn').on('click', function() {
+        offsetX = 0;
+        $('#imageDisplay').css('left', initialLeft);
+        updateOutput();
+      });
+      $('#centerVerticalBtn').on('click', function() {
+        offsetY = 0;
+        $('#imageDisplay').css('top', initialTop);
+        updateOutput();
+      });
+
+      // Update the output area and labels.
+      function updateOutput() {
+        const newTop = totalVertPadding / 2 + offsetY;
+        const newBottom = totalVertPadding / 2 - offsetY;
+        const newLeft = totalHorizPadding / 2 + offsetX;
+        const newRight = totalHorizPadding / 2 - offsetX;
+        const scaledTop = newTop * scaling;
+        const scaledBottom = newBottom * scaling;
+        const scaledLeft = newLeft * scaling;
+        const scaledRight = newRight * scaling;
+        const imageWidth = $('#imageDisplay')[0].naturalWidth;
+        const imageHeight = $('#imageDisplay')[0].naturalHeight;
+        const targetWidth = $('#targetWidth').val() !== "" ? parseFloat($('#targetWidth').val()) : null;
+        const targetHeight = $('#targetHeight').val() !== "" ? parseFloat($('#targetHeight').val()) : null;
+        const finalWidth = targetWidth !== null ? targetWidth : (imageWidth + newLeft + newRight);
+        const finalHeight = targetHeight !== null ? targetHeight : (imageHeight + newTop + newBottom);
+        $('#output').text(
+          'Redistributed Padding Values (pre-scaling):\n' +
+          '  Top:    ' + newTop.toFixed(2) + '\n' +
+          '  Right:  ' + newRight.toFixed(2) + '\n' +
+          '  Bottom: ' + newBottom.toFixed(2) + '\n' +
+          '  Left:   ' + newLeft.toFixed(2) + '\n\n' +
+          'After applying scaling ratio (' + scaling + '):\n' +
+          '  Top:    ' + scaledTop.toFixed(2) + '\n' +
+          '  Right:  ' + scaledRight.toFixed(2) + '\n' +
+          '  Bottom: ' + scaledBottom.toFixed(2) + '\n' +
+          '  Left:   ' + scaledLeft.toFixed(2) + '\n\n' +
+          'Final Outpainted Dimensions:\n' +
+          '  Width:  ' + finalWidth.toFixed(2) + '\n' +
+          '  Height: ' + finalHeight.toFixed(2)
+        );
+        $('#verticalLabel').text("Left: " + newLeft.toFixed(2) + " | Right: " + newRight.toFixed(2));
+        $('#horizontalLabel').text("Top: " + newTop.toFixed(2) + " | Bottom: " + newBottom.toFixed(2));
+      }
+    });
+  </script>
+</body>
+</html>
